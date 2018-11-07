@@ -963,7 +963,8 @@ SortParticlesByBin (const ParIterBase<false,NStructReal,NStructInt,NArrayReal,NA
     
     MFIter mfi(*redistribute_mask_ptr, false);
 
-    const Box& bx = mfi.validbox();
+    //    const Box& bx = mfi.validbox();
+    const Box& bx = mfi.growntilebox();
     int gid = mfi.index();
     int tid = mfi.LocalTileIndex();
     auto& ptile = plev[std::make_pair(gid, tid)];
@@ -1059,9 +1060,8 @@ SortParticlesByBin (const ParIterBase<false,NStructReal,NStructInt,NArrayReal,NA
     			bin_stop.begin());
     std::cout << "HERE 11 " << std::endl;
 
-
     // to print a thrust vector
-    // thrust::copy(bin_start.begin(), bin_start.end(), std::ostream_iterator<float>(std::cout, " "));
+    thrust::copy(bin_start.begin(), bin_start.end(), std::ostream_iterator<float>(std::cout, " "));
 
 #endif
 }
