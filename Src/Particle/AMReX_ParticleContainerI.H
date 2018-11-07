@@ -944,7 +944,125 @@ SortParticlesByBin (const ParIterBase<false,NStructReal,NStructInt,NArrayReal,NA
 #ifdef AMREX_USE_CUDA
   
     BL_PROFILE("ParticleContainer::SortParticlesByBin()");
-  
+
+    BuildRedistributeMask(0, 1);
+
+    const int lev = 0;
+    const Geometry& geom = Geom(lev);
+    const BoxArray& ba   = ParticleBoxArray(lev);
+    const DistributionMapping& dmap = ParticleDistributionMap(lev);
+    auto& plev  = m_particles[lev];
+
+    // temporaries
+    m_patches_tmp.resize(0);
+    m_index_sequence_tmp.resize(0);
+    m_aos_r.resize(0);
+    m_grids_r.resize(0);
+    m_rdata_r.resize(0);
+    m_idata_r.resize(0);
+    
+    MFIter mfi(*redistribute_mask_ptr, false);
+
+    const Box& bx = mfi.validbox();
+    int gid = mfi.index();
+    int tid = mfi.LocalTileIndex();
+    auto& ptile = plev[std::make_pair(gid, tid)];
+    auto& aos   = ptile.GetArrayOfStructs();
+    auto& soa   = ptile.GetStructOfArrays();
+    const size_t np = aos.numParticles();
+
+    m_patches_tmp.resize(np);
+    m_index_sequence_tmp.resize(np);
+
+    thrust::sequence(thrust::device, 
+		     m_index_sequence_tmp.begin(), 
+		     m_index_sequence_tmp.end());        
+
+    thrust::transform(thrust::device, 
+		      thrust::device_ptr<ParticleType>(static_cast<ParticleType*>(aos().data())),
+		      thrust::device_ptr<ParticleType>(static_cast<ParticleType*>(aos().data()) + aos.size()),
+		      m_patches_tmp.begin(),
+		      functors::assignParticleBin(geom.data(), bx, bin_size));
+
+    thrust::sort_by_key(thrust::cuda::par(Cuda::The_ThrustCachedAllocator()),
+			m_patches_tmp.begin(),
+			m_patches_tmp.end(),
+			m_index_sequence_tmp.begin());
+
+    
+
+    // to print a thrust vector
+    thrust::copy(m_patches_tmp.begin(), m_patches_tmp.end(), std::ostream_iterator<float>(std::cout, " "));
+    // hard-coded simulation box size
+    const int num_patches = (16)*(16)*(16) / (bin_size[0]*bin_size[1]*bin_size[2]);
+
+    {
+
+      // reorder structs
+      m_aos_r.resize(np);
+      thrust::copy_n(thrust::device,
+            thrust::make_permutation_iterator(
+	       thrust::device_ptr<ParticleType>(static_cast<ParticleType*>(aos().data())),
+                                                 m_index_sequence_tmp.begin()), 
+			   np, m_aos_r.begin());
+      thrust::copy(thrust::device, m_aos_r.begin(), m_aos_r.end(), 
+		   thrust::device_ptr<ParticleType>(static_cast<ParticleType*>(aos().data())));
+
+      // reorder real arrays
+      m_rdata_r.resize(np);
+      for (int j = 0; j < NArrayReal; ++j)
+	{
+	  auto& rdata = ptile.GetStructOfArrays().GetRealData(j);
+	  thrust::copy_n(thrust::device,
+			 thrust::make_permutation_iterator(thrust::device_ptr<Real>(rdata.data()),
+							   m_index_sequence_tmp.begin()), 
+			 np, m_rdata_r.begin());
+	  thrust::copy(thrust::device, m_rdata_r.begin(), m_rdata_r.end(), 
+		       thrust::device_ptr<Real>(rdata.data()));
+	}
+
+      // reorder int arrays
+      m_idata_r.resize(np);
+      for (int j = 0; j < NArrayInt; ++j)
+	{
+	  auto& idata = ptile.GetStructOfArrays().GetIntData(j);
+	  thrust::copy_n(thrust::device,
+			 thrust::make_permutation_iterator(thrust::device_ptr<int>(idata.data()),
+							   m_index_sequence_tmp.begin()), 
+			 np, m_idata_r.begin());
+	  thrust::copy(thrust::device, m_idata_r.begin(), m_idata_r.end(), 
+		       thrust::device_ptr<int>(idata.data()));
+	}
+    }
+
+    std::cout << "num_patches " << num_patches << std::endl;
+
+    bin_start.resize(num_patches);
+    bin_stop.resize(num_patches);
+
+    thrust::device_vector<int> patch_begin(num_patches);
+    thrust::device_vector<int> patch_end(num_patches);
+    thrust::counting_iterator<unsigned> search_begin(0);
+    thrust::lower_bound(thrust::device,
+    		        m_patches_tmp.begin(),
+    			m_patches_tmp.end(),
+    			search_begin,
+    			search_begin + num_patches,
+    			bin_start.begin());
+    std::cout << "HERE 10 " << std::endl;
+        
+    thrust::upper_bound(thrust::device,
+    		        m_patches_tmp.begin(),
+    			m_patches_tmp.end(),
+    			search_begin,
+    			search_begin + num_patches,
+    			bin_stop.begin());
+    std::cout << "HERE 11 " << std::endl;
+
+
+    // to print a thrust vector
+    // thrust::copy(bin_start.begin(), bin_start.end(), std::ostream_iterator<float>(std::cout, " "));
+
 #endif
 }
 

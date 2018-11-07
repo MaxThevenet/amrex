@@ -111,17 +111,17 @@ namespace functors
       
         template <typename Particle>
         AMREX_GPU_HOST_DEVICE
-        int operator()(const Particle& p) const {
+	int operator()(const Particle& p) const {
 	    IntVect iv = IntVect(
 	AMREX_D_DECL(floor((p.m_rdata.pos[0]-domain.ProbLo()[0])/domain.CellSize()[0]),
 		     floor((p.m_rdata.pos[1]-domain.ProbLo()[1])/domain.CellSize()[1]),
 		     floor((p.m_rdata.pos[2]-domain.ProbLo()[2])/domain.CellSize()[2]))
 				 );
 
-	    iv += domain.Domain().smallEnd();
-	    
-	    Box tbx;
-	    return getTileIndex(iv, box, true, bin_size, tbx);	    
+	iv += domain.Domain().smallEnd();
+
+	Box tbx;
+	return getTileIndex(iv, box, true, bin_size, tbx);
 	}
     };
 
