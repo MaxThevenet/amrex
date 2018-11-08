@@ -956,6 +956,7 @@ SortParticlesByBin (const ParIterBase<false,NStructReal,NStructInt,NArrayReal,NA
     // temporaries
     m_patches_tmp.resize(0);
     m_index_sequence_tmp.resize(0);
+    m_patches_r.resize(0);
     m_aos_r.resize(0);
     m_rdata_r.resize(0);
     m_idata_r.resize(0);
@@ -997,6 +998,7 @@ SortParticlesByBin (const ParIterBase<false,NStructReal,NStructInt,NArrayReal,NA
     {
 
       // reorder structs
+      m_patches_r.resize(np);
       m_aos_r.resize(np);
       m_rdata_r.resize(np);
       m_idata_r.resize(np);
@@ -1007,6 +1009,15 @@ SortParticlesByBin (const ParIterBase<false,NStructReal,NStructInt,NArrayReal,NA
 			   np, m_aos_r.begin());
       thrust::copy(thrust::device, m_aos_r.begin(), m_aos_r.end(), 
 		   thrust::device_ptr<ParticleType>(static_cast<ParticleType*>(aos().data())));
+
+            // reorder patches
+            m_patches_r.resize(np);
+            thrust::copy_n(thrust::device,
+                           thrust::make_permutation_iterator(m_patches_tmp.begin(),
+                                                             m_index_sequence_tmp.begin()), 
+                           np, m_patches_r.begin());
+            thrust::copy(thrust::device, m_patches_r.begin(), m_patches_r.end(), m_patches_tmp.begin());
+
       // reorder real arrays
       for (int j = 0; j < NArrayReal; ++j)
 	{

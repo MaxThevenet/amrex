@@ -606,6 +606,7 @@ protected:
 
     mutable thrust::device_vector<ParticleType> m_aos_r;
     mutable thrust::device_vector<int> m_grids_r;
+    mutable thrust::device_vector<int> m_patches_r;
     mutable thrust::device_vector<Real> m_rdata_r;
     mutable thrust::device_vector<int> m_idata_r;
 
