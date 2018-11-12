@@ -37,8 +37,8 @@ endif
 
 ifeq ($(DEBUG),TRUE)
 
-  CXXFLAGS += -g -O0 -fno-inline -ggdb -Wshadow -Wall -Wno-sign-compare -ftrapv -Wno-unused-but-set-variable -Werror=return-type
-  CFLAGS   += -g -O0 -fno-inline -ggdb -Wshadow -Wall -Wno-sign-compare -ftrapv -Wno-unused-but-set-variable -Werror=return-type
+  CXXFLAGS += -g -O0 -ggdb -Wshadow -Wall -Wno-sign-compare -ftrapv -Wno-unused-but-set-variable -Werror=return-type
+  CFLAGS   += -g -O0 -ggdb -Wshadow -Wall -Wno-sign-compare -ftrapv -Wno-unused-but-set-variable -Werror=return-type
 
   FFLAGS   += -g -O0 -ggdb -fcheck=bounds -fbacktrace -Wuninitialized -Wunused -ffpe-trap=invalid,zero -finit-real=snan -finit-integer=2147483647 -ftrapv
   F90FLAGS += -g -O0 -ggdb -fcheck=bounds -fbacktrace -Wuninitialized -Wunused -ffpe-trap=invalid,zero -finit-real=snan -finit-integer=2147483647 -ftrapv
@@ -67,6 +67,16 @@ ifeq ($(USE_GPROF),TRUE)
 
 endif
 
+
+ifeq ($(USE_COMPILE_PIC),TRUE)
+
+  CXXFLAGS = -fPIC
+  CFLAGS = -fPIC
+  FFLAGS = -fPIC
+  F90FLAGS = -fPIC
+
+endif
+
 ########################################################################
 
 ifeq ($(gcc_major_version),4)
@@ -83,14 +93,14 @@ F90FLAGS += -ffree-line-length-none -fno-range-check -fno-second-underscore -J$(
 
 GENERIC_GNU_FLAGS =
 
-gcc_major_gt_8 = $(shell expr $(gcc_major_version) \>= 8)
+gcc_major_ge_8 = $(shell expr $(gcc_major_version) \>= 8)
 
 ifeq ($(THREAD_SANITIZER),TRUE)
   GENERIC_GNU_FLAGS += -fsanitize=thread
 endif
 ifeq ($(FSANITIZER),TRUE)
   GENERIC_GNU_FLAGS += -fsanitize=address -fsanitize=undefined
-  ifeq ($(gcc_major_gt_8),1)
+  ifeq ($(gcc_major_ge_8),1)
     GENERIC_GNU_FLAGS += -fsanitize=pointer-compare -fsanitize=pointer-subtract
     GENERIC_GNU_FLAGS += -fsanitize=builtin -fsanitize=pointer-overflow
   endif
