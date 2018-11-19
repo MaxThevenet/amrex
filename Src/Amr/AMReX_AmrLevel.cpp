@@ -1032,7 +1032,7 @@ FillPatchIterator::FillFromLevel0 (Real time, int idx, int scomp, int dcomp, int
 
     StateDataPhysBCFunct physbcf(statedata,scomp,geom);
 
-    amrex::FillPatchSingleLevel (m_fabs, time, smf, stime, scomp, dcomp, ncomp, geom, physbcf);
+    amrex::FillPatchSingleLevel (m_fabs, time, smf, stime, scomp, dcomp, ncomp, geom, physbcf, scomp);
 }
 
 void
@@ -1064,13 +1064,15 @@ FillPatchIterator::FillFromTwoLevels (Real time, int idx, int scomp, int dcomp, 
     const StateDescriptor& desc = AmrLevel::desc_lst[idx];
 
     amrex::FillPatchTwoLevels(m_fabs, time, 
-			       smf_crse, stime_crse, 
-			       smf_fine, stime_fine,
-			       scomp, dcomp, ncomp, 
-			       geom_crse, geom_fine,
-			       physbcf_crse, physbcf_fine,
-			       crse_level.fineRatio(), 
-			       desc.interp(scomp), desc.getBCs());
+                              smf_crse, stime_crse, 
+                              smf_fine, stime_fine,
+                              scomp, dcomp, ncomp, 
+                              geom_crse, geom_fine,
+                              physbcf_crse, scomp,
+                              physbcf_fine, scomp,
+                              crse_level.fineRatio(), 
+                              desc.interp(scomp),
+                              desc.getBCs(),scomp);
 }
 
 static
@@ -1441,6 +1443,12 @@ FillPatchIterator::~FillPatchIterator () {
           delete tmp;
           mfList.pop_front();
         }
+
+        while(stateDataList.size()){
+          StateDataPhysBCFunct *tmp= stateDataList.front();
+          delete tmp;
+          stateDataList.pop_front();
+        }
 #endif
     }
 
@@ -1517,7 +1525,7 @@ AmrLevel::FillCoarsePatch (MultiFab& mf,
 	    StateDataPhysBCFunct physbcf(statedata,SComp,cgeom);
 
             crseMF.setDomainBndry(std::numeric_limits<Real>::quiet_NaN(), cgeom);
-	    amrex::FillPatchSingleLevel(crseMF,time,smf,stime,SComp,0,NComp,cgeom,physbcf);
+	    amrex::FillPatchSingleLevel(crseMF,time,smf,stime,SComp,0,NComp,cgeom,physbcf,SComp);
 	}
 	else
 	{
@@ -1550,7 +1558,7 @@ AmrLevel::FillCoarsePatch (MultiFab& mf,
 	}
 
 	StateDataPhysBCFunct physbcf(state[idx],SComp,geom);
-	physbcf.FillBoundary(mf, DComp, NComp, time);
+	physbcf.FillBoundary(mf, DComp, NComp, time, SComp);
 
         DComp += NComp;
     }
@@ -2041,22 +2049,22 @@ AmrLevel::writeSmallPlotNow ()
     return false;
 }
 
-const BoxArray& AmrLevel::getAreaNotToTag()
+const BoxArray& AmrLevel::getAreaNotToTag ()
 {
     return m_AreaNotToTag;
 }
 
-const Box& AmrLevel::getAreaToTag()
+const Box& AmrLevel::getAreaToTag ()
 {
     return m_AreaToTag;
 }
 
-void AmrLevel::setAreaNotToTag(BoxArray& ba)
+void AmrLevel::setAreaNotToTag (BoxArray& ba)
 {
     m_AreaNotToTag = ba;
 }
 
-void AmrLevel::constructAreaNotToTag()
+void AmrLevel::constructAreaNotToTag ()
 {
     if (level == 0 || !parent->useFixedCoarseGrids() || parent->useFixedUpToLevel()>level)
         return;
@@ -2093,14 +2101,14 @@ void AmrLevel::constructAreaNotToTag()
 }
 
 void
-AmrLevel::FillPatch(AmrLevel& amrlevel,
-		    MultiFab& leveldata,
-		    int       boxGrow,
-		    Real      time,
-		    int       index,
-		    int       scomp,
-		    int       ncomp,
-                    int       dcomp)
+AmrLevel::FillPatch (AmrLevel& amrlevel,
+		     MultiFab& leveldata,
+                     int       boxGrow,
+                     Real      time,
+                     int       index,
+                     int       scomp,
+                     int       ncomp,
+                     int       dcomp)
 {
     BL_ASSERT(dcomp+ncomp-1 <= leveldata.nComp());
     BL_ASSERT(boxGrow <= leveldata.nGrow());
@@ -2110,14 +2118,14 @@ AmrLevel::FillPatch(AmrLevel& amrlevel,
 }
 
 void
-AmrLevel::FillPatchAdd(AmrLevel& amrlevel,
-		       MultiFab& leveldata,
-                       int       boxGrow,
-                       Real      time,
-                       int       index,
-                       int       scomp,
-                       int       ncomp,
-                       int       dcomp)
+AmrLevel::FillPatchAdd (AmrLevel& amrlevel,
+                        MultiFab& leveldata,
+                        int       boxGrow,
+                        Real      time,
+                        int       index,
+                        int       scomp,
+                        int       ncomp,
+                        int       dcomp)
 {
     BL_ASSERT(dcomp+ncomp-1 <= leveldata.nComp());
     BL_ASSERT(boxGrow <= leveldata.nGrow());
@@ -2127,9 +2135,9 @@ AmrLevel::FillPatchAdd(AmrLevel& amrlevel,
 }
 
 void
-AmrLevel::LevelDirectoryNames(const std::string &dir,
-                              std::string &LevelDir,
-			      std::string &FullPath)
+AmrLevel::LevelDirectoryNames (const std::string &dir,
+                               std::string &LevelDir,
+                               std::string &FullPath)
 {
     LevelDir = amrex::Concatenate("Level_", level, 1);
     //
@@ -2817,6 +2825,7 @@ FillPatchIterator::initFillPatch(int boxGrow, int time, int index, int scomp, in
                 statedata.getData(smf,stime,time);
                 geom = &m_amrlevel.geom;
                 physbcf = new StateDataPhysBCFunct(statedata,scomp,*geom);
+		stateDataList.push_back(physbcf);
                 BL_ASSERT(scomp+ncomp <= smf[0]->nComp());
                 BL_ASSERT(dcomp+ncomp <= m_fabs.nComp());
                 BL_ASSERT(smf.size() == stime.size());
@@ -2892,6 +2901,7 @@ FillPatchIterator::initFillPatch(int boxGrow, int time, int index, int scomp, in
                         destGraph = new RegionGraph(m_fabs.IndexArray().size());
                         fsrcGraph = new RegionGraph(dmf->IndexArray().size());
                         fsrcGraph->buildTileArray(*dmf);
+		        regionList.push_back(destGraph);
 		        regionList.push_back(fsrcGraph);
 		        mfList.push_back(dmf);
                     }
@@ -2960,6 +2970,8 @@ FillPatchIterator::initFillPatch(int boxGrow, int time, int index, int scomp, in
                       statedata_fine.getData(smf_fine,stime_fine,time);
                       physbcf_crse = new StateDataPhysBCFunct(statedata_crse,scomp,*geom_crse);
                       physbcf_fine = new StateDataPhysBCFunct(statedata_fine,scomp,*geom_fine);
+		      stateDataList.push_back(physbcf_crse);
+		      stateDataList.push_back(physbcf_fine);
                   }
 #ifdef USE_PERILLA_PTHREADS
 //                perilla::syncAllThreads();
