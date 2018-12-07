@@ -41,8 +41,10 @@ Documentation on migration from BoxLib is available in the AMReX repository at D
    Chapter2
    Chapter3
    Chapter4
+   Chapter4a
    Chapter5
    Chapter6
+   Chapter6aa
    Chapter6a
    Chapter7
    Chapter8

@@ -25,13 +25,15 @@ LSCore<F>::~LSCore () {}
 template<class F>
 void LSCore<F>::ClearLevel (int lev) {
     level_set[lev].clear();
+    level_set_valid[lev].clear();
+
     // NOTE: maybe I shouldn't do this (this method is being called by regrid...)
     //ls_factory[lev].clear();
 }
 
 
 // Make a new level from scratch using provided BoxArray and
-// DistributionMapping. Only used during initialization. overrides the pure
+// DistributionMapping. Only used during initialization. Overrides the pure
 // virtual function in AmrCore
 template<class F>
 void LSCore<F>::MakeNewLevelFromScratch (int lev, Real time, const BoxArray & ba,
@@ -40,18 +42,28 @@ void LSCore<F>::MakeNewLevelFromScratch (int lev, Real time, const BoxArray & ba
     const int ncomp  = 1;
     const int nghost = 1;
 
-    // Make sure EB geometry exists (build if necessary)
+
+    /****************************************************************************
+     * Make sure EB geometry exists (build if necessary)                        *
+     ***************************************************************************/
+
     if (rebuild_eb[lev] == 1) {
-        int max_level = lev; // Important! this is needed to allow EBFactory to
-                             // be built on coarser levels (which is needed by
-                             // FillCoarsePatch)
-        EB2::Build(m_gshop, geom[lev], max_level, max_level);
+        int max_crse_level = lev; // Important! this is needed to allow
+                                  // EBFactory to be built on coarser levels
+                                  // (which is needed by FillCoarsePatch)
+        int required_crse_lev = std::max(0, lev - 1);
+        //int required_crse_lev = lev;
+        EB2::Build(m_gshop, geom[lev], required_crse_lev, max_crse_level);
         const EB2::IndexSpace & cylinder_ebis = EB2::IndexSpace::top();
         eb_levels[lev] = & cylinder_ebis.getLevel(geom[lev]);
 
         rebuild_eb[lev] = 0;
     }
 
+
+    /****************************************************************************
+     * Define Basic data MultiFabs                                              *
+     ***************************************************************************/
 
     BoxArray ba_nd = amrex::convert(ba, IntVect{1, 1, 1});
 
@@ -60,7 +72,16 @@ void LSCore<F>::MakeNewLevelFromScratch (int lev, Real time, const BoxArray & ba
     level_set[lev].define(ba_nd, dm, ncomp, nghost);
 
 
-    // Construct LSFactory (does the actual level-set building)
+    // At this point, we consider _everywhere_ as valid. This is maintained for
+    // legacy reasons. TODO: There might be a better way of doing things.
+    level_set_valid[lev].define(ba_nd, dm, ncomp, nghost);
+    level_set_valid[lev].setVal(1);
+
+
+    /****************************************************************************
+     * Construct LSFactory (does the actual level-set building on lev 0)        *
+     ***************************************************************************/
+
     // TODO: more light-weight structure here? (since we don't need all the
     // LSFactory features for LSCore)
     int levelset_pad    = nghost;
@@ -82,9 +103,16 @@ void LSCore<F>::MakeNewLevelFromScratch (int lev, Real time, const BoxArray & ba
     GShopLSFactory<F> ls_gshop(m_gshop, * ls_factory[lev]);
     std::unique_ptr<MultiFab> mf_impfunc = ls_gshop.fill_impfunc();
 
+
+    /****************************************************************************
+     * Fill the actual level-set MultiFabs (one for each level)                 *
+     ***************************************************************************/
+
     if (lev == 0){
 
-        // Compute LSFactory
+        //_______________________________________________________________________
+        // Compute level 0 using LSFactory
+
         int eb_pad = ls_factory[lev]->get_eb_pad();
         EBFArrayBoxFactory eb_factory(* eb_levels[lev], geom[lev], ba, dm,
                                       {eb_pad, eb_pad, eb_pad}, EBSupport::full);
@@ -95,16 +123,17 @@ void LSCore<F>::MakeNewLevelFromScratch (int lev, Real time, const BoxArray & ba
         level_set[lev].copy(* ls_factory[lev]->get_data(), 0, 0, 1, ng, ng);
     } else {
 
+        //_______________________________________________________________________
+        // Build finer levels locally, using coarse level set
+
         MakeNewLevelFromCoarse(lev, time, ba, dm);
 
         EBFArrayBoxFactory eb_factory(* eb_levels[lev], geom[lev], ba, dm,
                                       {max_eb_pad + 1, max_eb_pad + 1, max_eb_pad + 1},
                                       EBSupport::full);
 
-        // Dummy array for MFIter
-        MultiFab dummy(ba, dm, 1, max_eb_pad + 1, MFInfo(), eb_factory);
-        // Area fraction data
-        std::array<const MultiCutFab*, AMREX_SPACEDIM> areafrac = eb_factory.getAreaFrac();
+        // // Area fraction data
+        // std::array<const MultiCutFab*, AMREX_SPACEDIM> areafrac = eb_factory.getAreaFrac();
         // EB boundary-centre data
         const MultiCutFab & bndrycent = eb_factory.getBndryCent();
         const auto & flags = eb_factory.getMultiEBCellFlagFab();
@@ -115,6 +144,7 @@ void LSCore<F>::MakeNewLevelFromScratch (int lev, Real time, const BoxArray & ba
         iMultiFab eb_valid(ba, dm, 1, max_eb_pad +1);
         eb_valid.setVal(0);
 
+        // TODO: some of this might be shifted to the base class?
 
 #ifdef _OPENMP
 #pragma omp parallel
@@ -131,7 +161,7 @@ void LSCore<F>::MakeNewLevelFromScratch (int lev, Real time, const BoxArray & ba
             int n_facets = 0;
             const auto & flag = flags[mfi];
             // Need to count number of eb-facets (in order to allocate facet_list)
-            amrex_eb_count_facets(eb_search.loVect(), eb_search.hiVect(),
+            amrex_eb_count_facets(BL_TO_FORTRAN_BOX(eb_search),
                                   BL_TO_FORTRAN_3D(flag),
                                   & n_facets);
 
@@ -143,7 +173,7 @@ void LSCore<F>::MakeNewLevelFromScratch (int lev, Real time, const BoxArray & ba
                 const auto & bcent_tile = bndrycent[mfi];
 
                 int c_facets = 0;
-                amrex_eb_as_list(eb_search.loVect(), eb_search.hiVect(), & c_facets,
+                amrex_eb_as_list(BL_TO_FORTRAN_BOX(eb_search), & c_facets,
                                  BL_TO_FORTRAN_3D(flag),
                                  BL_TO_FORTRAN_3D(norm_tile),
                                  BL_TO_FORTRAN_3D(bcent_tile),
@@ -151,21 +181,19 @@ void LSCore<F>::MakeNewLevelFromScratch (int lev, Real time, const BoxArray & ba
                                  geom[lev].CellSize()                               );
 
                 Box tile_box   = mfi.tilebox();
-                const int * lo = tile_box.loVect();
-                const int * hi = tile_box.hiVect();
 
                       auto & ls_tile_w = level_set[lev][mfi];
                       auto & v_tile    = eb_valid[mfi];
                 const auto & if_tile   = (* mf_impfunc)[mfi];
 
-                amrex_eb_fill_levelset(lo, hi,
+                amrex_eb_fill_levelset(BL_TO_FORTRAN_BOX(tile_box),
                                        facet_list.dataPtr(), & facet_list_size,
                                        BL_TO_FORTRAN_3D(v_tile),
                                        BL_TO_FORTRAN_3D(ls_tile_w),
                                        geom[lev].CellSize(), geom[lev].CellSize() );
 
                 const int ls_grid_ref = 1;
-                amrex_eb_validate_levelset(lo, hi, & ls_grid_ref,
+                amrex_eb_validate_levelset(BL_TO_FORTRAN_BOX(tile_box), & ls_grid_ref,
                                            BL_TO_FORTRAN_3D(if_tile),
                                            BL_TO_FORTRAN_3D(v_tile),
                                            BL_TO_FORTRAN_3D(ls_tile_w)   );

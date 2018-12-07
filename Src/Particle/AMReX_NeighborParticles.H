@@ -24,23 +24,36 @@ class NeighborParticleContainer
     : public ParticleContainer<NStructReal, NStructInt, 0, 0>
 {
 
+    struct MaskComps
+    {
+        enum {
+            grid = 0,
+            tile,
+            level
+        };
+    };
+    
     struct NeighborIndexMap {
+        int dst_level;
         int dst_grid;
         int dst_tile;
         int dst_index;
+        int src_level;
         int src_grid;
         int src_tile;
         int src_index;
         int thread_num;
 
-        NeighborIndexMap(int dgrid, int dtile, int dindex,
-                         int sgrid, int stile, int sindex, int tnum)
-            : dst_grid(dgrid), dst_tile(dtile), dst_index(dindex),
-              src_grid(sgrid), src_tile(stile), src_index(sindex), thread_num(tnum)
+        NeighborIndexMap(int dlevel, int dgrid, int dtile, int dindex,
+                         int slevel, int sgrid, int stile, int sindex, int tnum)
+            : dst_level(dlevel), dst_grid(dgrid), dst_tile(dtile), dst_index(dindex),
+              src_level(slevel), src_grid(sgrid), src_tile(stile), src_index(sindex),
+              thread_num(tnum)
         {}
     };
     
     struct NeighborCopyTag {
+        int level;
         int grid;
         int tile;
         int src_index;
@@ -48,6 +61,7 @@ class NeighborParticleContainer
         int periodic_shift[3];
 
         bool operator<(const NeighborCopyTag& other) const {
+            if (level != other.level) return level < other.level;
             if (grid != other.grid) return grid < other.grid;
             if (tile != other.tile) return tile < other.tile;
             if (periodic_shift[0] != other.periodic_shift[0]) 
@@ -60,20 +74,26 @@ class NeighborParticleContainer
         }
         
         bool operator==(const NeighborCopyTag& other) const {
-            return (grid == other.grid) and (tile == other.tile)
+            return (level == other.level) and (grid == other.grid) and (tile == other.tile)
                 and (periodic_shift[0] == other.periodic_shift[0])
                 and (periodic_shift[1] == other.periodic_shift[1])
                 and (periodic_shift[2] == other.periodic_shift[2]);
         }
+
+        bool operator!=(const NeighborCopyTag& other) const
+        {
+            return !operator==(other);
+        }        
     };
 
     struct NeighborCommTag {
         
-        NeighborCommTag(int pid, int gid, int tid)
-            : proc_id(pid), grid_id(gid), tile_id(tid)
+        NeighborCommTag(int pid, int lid, int gid, int tid)
+            : proc_id(pid), level_id(lid), grid_id(gid), tile_id(tid)
             {}
         
         int proc_id;
+        int level_id;
         int grid_id;
         int tile_id;
         
@@ -83,13 +103,18 @@ class NeighborParticleContainer
                      grid_id < other.grid_id) ||
                     (proc_id == other.proc_id && 
                      grid_id == other.grid_id && 
-                     tile_id < other.tile_id ));
+                     tile_id < other.tile_id) ||
+                    (proc_id == other.proc_id && 
+                     grid_id == other.grid_id && 
+                     tile_id == other.tile_id &&
+                     level_id < other.level_id));
         }
 
         bool operator==(const NeighborCommTag& other) const {
             return ( (proc_id == other.proc_id) and 
                      (grid_id == other.grid_id) and
-                     (tile_id == other.tile_id) );
+                     (tile_id == other.tile_id) and
+                     (level_id == other.level_id));
         }
     };    
         
@@ -105,57 +130,79 @@ public:
     using IntVector  = typename ParticleContainer<NStructReal, NStructInt, 0, 0>::IntVector;
 
     NeighborParticleContainer(ParGDBBase* gdb, int ncells);
-
+    
     NeighborParticleContainer(const Geometry            & geom,
                               const DistributionMapping & dmap,
                               const BoxArray            & ba,
                               int                         nneighbor);
-
+    
+    NeighborParticleContainer(const Vector<Geometry>            & geom,
+                              const Vector<DistributionMapping> & dmap,
+                              const Vector<BoxArray>            & ba,
+                              const Vector<int>                 & rr,
+                              int                               nneighbor);
+    
     ///
-    /// This resets the particle container to use the given BoxArray
-    /// and DistributionMapping
+    /// Regrid functions
     ///
-    void Regrid(const DistributionMapping &dmap, const BoxArray &ba );
+    void Regrid(const DistributionMapping& dmap, const BoxArray& ba);
+    void Regrid(const DistributionMapping& dmap, const BoxArray& ba, const int lev);
+    void Regrid(const Vector<DistributionMapping>& dmap, const Vector<BoxArray>& ba);
 
     ///
     /// This builds the internal data structure used for looking up neighbors
     ///
-    void BuildLevelMask(int lev);
+    void BuildMasks();
 
     ///
     /// This fills the neighbor buffers for each tile with the proper data
     ///
-    void fillNeighbors(int lev);
+    void fillNeighbors();
 
-    void cacheNeighborInfo(int lev);
+    void cacheNeighborInfo();
 
     ///
     /// This updates the neighbors with their current particle data.
     ///
-    void updateNeighbors(int lev, bool reuse_rcv_counts=true);
+    void updateNeighbors(bool reuse_rcv_counts=true);
 
     ///
     /// Each tile clears its neighbors, freeing the memory
     ///
-    void clearNeighbors(int lev);
+    void clearNeighbors();
 
     ///
     /// Build a Neighbor List for each tile
     ///
     template <class CheckPair>
-    void buildNeighborList(int lev, CheckPair check_pair, bool sort=false);
-
-    void buildNeighborListFort(int lev, bool sort=false);
+    void buildNeighborList(CheckPair check_pair, bool sort=false);
 
     void setRealCommComp(int i, bool value);
-    void setIntCommComp(int i, bool value);
+    void setIntCommComp (int i, bool value);
 
-    // Note that ParticleVector and IntVector are defined in AMReXParticles.H
-    std::map<PairIndex, ParticleVector > neighbors;
-    std::map<PairIndex, IntVector  > neighbor_list;
-    const size_t pdata_size = sizeof(ParticleType);
+    ParticleVector& GetNeighbors(int lev, int grid, int tile)
+    {
+        return neighbors[lev][std::make_pair(grid,tile)];
+    }
+
+    const ParticleVector& GetNeighbors(int lev, int grid, int tile) const
+    {
+        return neighbors[lev][std::make_pair(grid,tile)];
+    }
+    
+    IntVector& GetNeighborList(int lev, int grid, int tile)
+    {
+        return neighbor_list[lev][std::make_pair(grid,tile)];
+    }
+
+    const IntVector& GetNeighborList(int lev, int grid, int tile) const
+    {
+        return neighbor_list[lev][std::make_pair(grid,tile)];
+    }
     
 protected:
+
+    void resizeContainers(const int lev);
     
     void initializeCommComps();
     
@@ -171,10 +218,15 @@ protected:
     ///
     void getRcvCountsMPI();
 
+    amrex::Vector<std::map<PairIndex, ParticleVector> > neighbors;
+    amrex::Vector<std::map<PairIndex, IntVector> > neighbor_list;
+    const size_t pdata_size = sizeof(ParticleType);
+    
+    static constexpr int num_mask_comps = 3;  // grid, tile, level    
     size_t cdata_size;
     int num_neighbor_cells;
     amrex::Vector<NeighborCommTag> local_neighbors;
-    std::unique_ptr<iMultiFab> mask_ptr;
+    amrex::Vector<std::unique_ptr<iMultiFab> > mask_ptr;
 
     std::map<PairIndex, Vector<Vector<NeighborCopyTag> > > buffer_tag_cache;
     std::map<PairIndex, int> local_neighbor_sizes;
