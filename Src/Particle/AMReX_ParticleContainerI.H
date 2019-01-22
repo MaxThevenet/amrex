@@ -971,20 +971,26 @@ SortParticlesByBin (const ParIterBase<false,NStructReal,NStructInt,NArrayReal,NA
 		     m_index_sequence_tmp.begin(), 
 		     m_index_sequence_tmp.end());        
 
+    // Even when this section is commented, I end up with a segfault.
     thrust::transform(thrust::device, 
 		      thrust::device_ptr<ParticleType>(static_cast<ParticleType*>(aos().data())),
 		      thrust::device_ptr<ParticleType>(static_cast<ParticleType*>(aos().data()) + aos.size()),
 		      m_patches_tmp.begin(),
 		      functors::assignParticleBin(geom.data(), bx, bin_size));
+
     thrust::sort_by_key(thrust::cuda::par(Cuda::The_ThrustCachedAllocator()),
 			m_patches_tmp.begin(),
 			m_patches_tmp.end(),
 			m_index_sequence_tmp.begin());
 
+    //     std::cout << "m_index_sequence_tmp " << m_index_sequence_tmp << std::endl;
+    // thrust::copy(m_index_sequence_tmp.begin(), m_index_sequence_tmp.end(), std::ostream_iterator<float>(std::cout, " "));
+
     const int num_patches = 
-      ( (geom.data().ProbHi()[0]-geom.data().ProbLo()[0])/geom.data().CellSize()[0] + 2)/bin_size[0] * 
-      ( (geom.data().ProbHi()[1]-geom.data().ProbLo()[1])/geom.data().CellSize()[1] + 2)/bin_size[1] * 
-      ( (geom.data().ProbHi()[2]-geom.data().ProbLo()[2])/geom.data().CellSize()[2] + 2)/bin_size[2] ;
+      ( (geom.data().ProbHi()[0]-geom.data().ProbLo()[0])/geom.data().CellSize()[0])/bin_size[0] * 
+      ( (geom.data().ProbHi()[1]-geom.data().ProbLo()[1])/geom.data().CellSize()[1])/bin_size[1] * 
+      ( (geom.data().ProbHi()[2]-geom.data().ProbLo()[2])/geom.data().CellSize()[2])/bin_size[2] ;
+
     std::cout << "num_patches " << num_patches << std::endl;
 
     {
