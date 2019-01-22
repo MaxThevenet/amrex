@@ -816,6 +816,74 @@ ParticleContainer<NStructReal, NStructInt, NArrayReal, NArrayInt>
     }
 }
 
+template <int NStructReal, int NStructInt, int NArrayReal, int NArrayInt>
+void
+ParticleContainer<NStructReal, NStructInt, NArrayReal, NArrayInt>::
+clearParticles()
+{
+    BL_PROFILE("ParticleContainer::clearParticles()");
+    
+    for (int lev = 0; lev < static_cast<int>(m_particles.size()); ++lev)
+    {
+        for (auto& kv : m_particles[lev]) 
+        {
+            kv.second.resize(0);
+        }
+    }
+}
+
+template <int NStructReal, int NStructInt, int NArrayReal, int NArrayInt>
+void
+ParticleContainer<NStructReal, NStructInt, NArrayReal, NArrayInt>::
+copyParticles(const ParticleContainerType& other)
+{
+    BL_PROFILE("ParticleContainer::copyParticles");
+
+    clearParticles();
+    
+    for (int lev = 0; lev < other.numLevels(); ++lev)
+    {
+        const auto& plevel_other = other.GetParticles(lev);
+        auto& plevel = GetParticles(lev);
+        for(MFIter mfi = other.MakeMFIter(lev); mfi.isValid(); ++mfi)
+        {
+            auto index = std::make_pair(mfi.index(), mfi.LocalTileIndex());
+            
+            if(plevel_other.find(index) == plevel_other.end()) continue;
+            
+            const auto& tile_other = plevel_other.at(index);
+            
+            if (tile_other.numParticles() == 0) continue;
+            
+            const auto& aos_other = tile_other.GetArrayOfStructs();
+            for (const auto& particle_struct : aos_other)
+            {
+                plevel[index].push_back(particle_struct);
+            }
+
+            const auto& soa_other = tile_other.GetStructOfArrays();
+            for (int j = 0; j < NArrayReal; ++j)
+            {
+                auto& rdata = soa_other.GetRealData(j);
+                for(const auto& real_attrib : rdata)
+                {
+                    plevel[index].push_back_real(j, real_attrib);
+                }                
+            }
+            for (int j = 0; j < NArrayInt; ++j)
+            {
+                auto& idata = soa_other.GetIntData(j);
+                for(const auto& int_attrib : idata)
+                {
+                    plevel[index].push_back_int(j, int_attrib);
+                }
+            }
+        }
+    }
+    
+    Redistribute();
+}
+
 //
 // This redistributes valid particles and discards invalid ones.
 //
@@ -1099,7 +1167,7 @@ ParticleContainer<NStructReal, NStructInt, NArrayReal, NArrayInt>
     const DistributionMapping& dmap = ParticleDistributionMap(lev);
     auto& plev  = m_particles[lev];
 
-    if (ba.size() == 1) 
+    if ( (ba.size() == 1) and geom.isAllPeriodic() )
     {
         EnforcePeriodicGPU();
         AMREX_ASSERT(OK());
@@ -1260,7 +1328,9 @@ ParticleContainer<NStructReal, NStructInt, NArrayReal, NArrayInt>
 
     //
     // We now have a temporary buffer that holds all the particles that need to be 
-    // moved somewhere else. Now we sort those particles by their destination grid
+    // moved somewhere else. We sort those particles by their destination grid.
+    // Note that a negative grid id means the particle has left the domain in a non-
+    // periodic direction - we remove those from the simulation volume here.
     //
     for (auto& kv : m_not_ours) kv.second.resize(0);
     const int num_grids = ba.size();
@@ -1270,8 +1340,8 @@ ParticleContainer<NStructReal, NStructInt, NArrayReal, NArrayInt>
     {
         BL_PROFILE_VAR_START(blp_sort);
 
-        thrust::device_vector<int> grid_begin(num_grids);
-        thrust::device_vector<int> grid_end(num_grids);
+        thrust::device_vector<int> grid_begin(num_grids + 1);
+        thrust::device_vector<int> grid_end(num_grids + 1);
 
         m_index_sequence_tmp.resize(num_to_move);
         thrust::sequence(thrust::device, m_index_sequence_tmp.begin(), m_index_sequence_tmp.end());
@@ -1321,19 +1391,19 @@ ParticleContainer<NStructReal, NStructInt, NArrayReal, NArrayInt>
         //
         // Now we compute the start and stop index in the sorted array for each grid
         //
-        thrust::counting_iterator<unsigned> search_begin(0);
+        thrust::counting_iterator<int> search_begin(-1);
         thrust::lower_bound(thrust::device,
                             m_grids_to_redistribute.begin(),
                             m_grids_to_redistribute.end(),
                             search_begin,
-                            search_begin + num_grids,
+                            search_begin + num_grids + 1,
                             grid_begin.begin());
         
         thrust::upper_bound(thrust::device,
                             m_grids_to_redistribute.begin(),
                             m_grids_to_redistribute.end(),
                             search_begin,
-                            search_begin + num_grids,
+                            search_begin + num_grids + 1,
                             grid_end.begin());
         
         thrust::host_vector<int> start(grid_begin);
@@ -1361,7 +1431,7 @@ ParticleContainer<NStructReal, NStructInt, NArrayReal, NArrayInt>
             const int tid = 0;
             auto pair_index = std::make_pair(i, tid);
             
-            const size_t num_to_add = stop[i] - start[i];
+            const size_t num_to_add = stop[i+1] - start[i+1];
 
             const int dest_proc = dmap[i];
             if (dest_proc == ParallelDescriptor::MyProc())  // this is a local copy
@@ -1376,7 +1446,7 @@ ParticleContainer<NStructReal, NStructInt, NArrayReal, NArrayInt>
 		    auto& src = m_aos_to_redistribute;
                     auto& dst = ptile.GetArrayOfStructs();
                     thrust::copy(thrust::device,
-                                 src.begin() + start[i], src.begin() + stop[i], 
+                                 src.begin() + start[i+1], src.begin() + stop[i+1], 
 				 dst().begin() + old_size);
                 }
                 
@@ -1386,7 +1456,7 @@ ParticleContainer<NStructReal, NStructInt, NArrayReal, NArrayInt>
 		    auto& src = m_real_arrays_to_redistribute[j];
 		    auto& dst = ptile.GetStructOfArrays().GetRealData(j);
                     thrust::copy(thrust::device,
-				 src.begin() + start[i], src.begin() + stop[i],
+				 src.begin() + start[i+1], src.begin() + stop[i+1],
 				 dst.begin() + old_size);
                 }
 
@@ -1396,7 +1466,7 @@ ParticleContainer<NStructReal, NStructInt, NArrayReal, NArrayInt>
 		    auto& src = m_int_arrays_to_redistribute[j];
 		    auto& dst = ptile.GetStructOfArrays().GetIntData(j);
                     thrust::copy(thrust::device,
-				 src.begin() + start[i], src.begin() + stop[i],
+				 src.begin() + start[i+1], src.begin() + stop[i+1],
 				 dst.begin() + old_size);
                 }
             }
@@ -1435,7 +1505,7 @@ ParticleContainer<NStructReal, NStructInt, NArrayReal, NArrayInt>
                 {
 		    auto& aos = m_aos_to_redistribute;
                     cudaMemcpy(thrust::raw_pointer_cast(dst), 
-                               thrust::raw_pointer_cast(aos.data() + start[i]),
+                               thrust::raw_pointer_cast(aos.data() + start[i+1]),
                                num_to_add*sizeof(ParticleType), cudaMemcpyDeviceToDevice);
                     dst += num_to_add*sizeof(ParticleType);
                 }
@@ -1446,7 +1516,7 @@ ParticleContainer<NStructReal, NStructInt, NArrayReal, NArrayInt>
                     if (not communicate_real_comp[j]) continue;
                     auto& attrib = m_real_arrays_to_redistribute[j];
                     cudaMemcpy(thrust::raw_pointer_cast(dst), 
-                               thrust::raw_pointer_cast(attrib.data() + start[i]),
+                               thrust::raw_pointer_cast(attrib.data() + start[i+1]),
                                num_to_add*sizeof(Real), cudaMemcpyDeviceToDevice);
                     dst += num_to_add*sizeof(Real);
                 }
@@ -1457,7 +1527,7 @@ ParticleContainer<NStructReal, NStructInt, NArrayReal, NArrayInt>
                     if (not communicate_int_comp[j]) continue;
                     auto& attrib = m_int_arrays_to_redistribute[j];
                     cudaMemcpy(thrust::raw_pointer_cast(dst),
-                               thrust::raw_pointer_cast(attrib.data() + start[i]),
+                               thrust::raw_pointer_cast(attrib.data() + start[i+1]),
                                num_to_add*sizeof(int), cudaMemcpyDeviceToDevice);
                     dst += num_to_add*sizeof(int);
                 }

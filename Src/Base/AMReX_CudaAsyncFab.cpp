@@ -72,11 +72,10 @@ AsyncFab::clear ()
     m_fab = nullptr;
 }
 
-AsyncFab::~AsyncFab ()
+Array4<Real>
+AsyncFab::array () const
 {
-#ifndef __CUDA_ARCH__
-    clear();
-#endif
+    return m_impl->hostFab().array();
 }
 
 }

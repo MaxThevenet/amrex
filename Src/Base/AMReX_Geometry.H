@@ -8,6 +8,7 @@
 #include <omp.h>
 #endif
 
+#include <AMReX_Array.H>
 #include <AMReX_CoordSys.H>
 #include <AMReX_ParallelDescriptor.H>
 #include <AMReX_RealBox.H>
@@ -181,6 +182,11 @@ public:
     {
         return AMREX_D_TERM(isPeriodic(0),&&isPeriodic(1),&&isPeriodic(2));
     }
+    static GpuArray<int,AMREX_SPACEDIM> isPeriodicArray () {
+        return {AMREX_D_DECL(static_cast<int>(is_periodic[0]),
+                             static_cast<int>(is_periodic[1]),
+                             static_cast<int>(is_periodic[2]))};
+    }
     //! What's period in specified direction?
     int period (int dir) const { BL_ASSERT(is_periodic[dir]); return domain.length(dir); }
 
@@ -213,6 +219,18 @@ public:
     Box growNonPeriodicDomain (int ngrow) const;
     // Return domain box with periodic directions grown by ngrow.
     Box growPeriodicDomain (int ngrow) const;
+
+    // Set periodicity flags and return the old flags.
+    // Note that, unlike Periodicity class, the flags are just boolean.
+    static Array<bool,AMREX_SPACEDIM> setPeriodicity (Array<bool,AMREX_SPACEDIM> const& period) {
+        Array<bool,AMREX_SPACEDIM> r{AMREX_D_DECL(is_periodic[0],
+                                                  is_periodic[1],
+                                                  is_periodic[2])};
+        AMREX_D_TERM(is_periodic[0] = period[0];,
+                     is_periodic[1] = period[1];,
+                     is_periodic[2] = period[2];);
+        return r;
+    }
 
 private:
     //! Helper functions.

@@ -12,6 +12,7 @@
 
 #include <AMReX_BCRec.H>
 #include <AMReX_Vector.H>
+#include <AMReX_TagBox.H>
 #include <AMReX_AmrCore.H>
 
 #include <AMReX_EB_LSCore_F.H>
@@ -35,6 +36,36 @@ class LSCoreBase
 {
 public:
 
+
+    /****************************************************************************
+     * Static utilities exposing LSCore's basic operations to classes managing  *
+     * their own grids.                                                         *
+     ***************************************************************************/
+
+    static void FillLevelSetTags( int lev, TagBoxArray & tags, const Vector<Real> & phierr,
+                                  const MultiFab & levelset_data, const Vector<Geometry> & geom );
+
+    static void FillVolfracTags( int lev, TagBoxArray & tags, int buffer,
+                                 const Vector<BoxArray> & grids,
+                                 const Vector<DistributionMapping> & dmap,
+                                 const EB2::Level & eb_lev, const Vector<Geometry> & geom );
+
+    static Box EBSearchBox( const Box & tilebox, const FArrayBox & ls_crse,
+                            const Geometry & geom_fine, const IntVect & max_grow, bool & bail);
+
+    static void FillCoarsePatch (MultiFab & mf_fne, const MultiFab & mf_crse,
+                                 const Geometry & geom_fne, const Geometry & geom_crse,
+                                 const Vector<BCRec> & bcs, const IntVect & ref, int icomp, int ncomp);
+
+    static void MakeNewLevelFromCoarse (MultiFab & ls_fine, const MultiFab & ls_crse,
+                                        const BoxArray & ba, const DistributionMapping & dm,
+                                        const Geometry & geom_fine, const Geometry & geom_crse,
+                                        const Vector<BCRec> & bcs, const IntVect & ref);
+
+    static void FillLevelSet( MultiFab & level_set, const MultiFab & ls_crse,
+                              const EBFArrayBoxFactory & eb_factory, const MultiFab & mf_impfunc,
+                              const IntVect & ebt_size, int eb_pad, const Geometry & geom );
+
     /****************************************************************************
      * public member functions                                                  *
      ***************************************************************************/
@@ -46,7 +77,7 @@ public:
     virtual ~LSCoreBase ();
 
     // Initializes multilevel data
-    void InitData (bool a_use_phierr = true);
+    void InitData (bool a_use_phierr = false);
     void InitData (const Vector<Real> & m_phierr);
 
     // Make a new level using provided BoxArray and DistributionMapping and fill
@@ -73,7 +104,7 @@ public:
 
     // Tag all cells for refinement. Overrides the pure virtual function in
     // AmrCore
-    virtual void ErrorEst (int lev, amrex::TagBoxArray& tags, amrex::Real time, int ngrow) override;
+    virtual void ErrorEst (int lev, TagBoxArray & tags, Real time, int ngrow) override;
 
     // Write plotfile to disk
     void WritePlotFile () const;
@@ -82,6 +113,7 @@ public:
     void WriteCheckpointFile () const;
 
     const MultiFab * getLevelSet(int n) const {return & level_set[n];}
+          MultiFab * getLevelSet(int n)       {return & level_set[n];}
     const iMultiFab * getValid(int n) const {return & level_set_valid[n];}
 
 protected:
@@ -118,7 +150,8 @@ protected:
 
     // Construct a box over which to search for eb facets using the coarser
     // level to inform how many ghost cells to fill
-    Box EBSearchBox(const FArrayBox & ls_crse, const Geometry & geom_fine, bool & bail);
+    Box EBSearchBox(const Box & box, const FArrayBox & ls_crse,
+                    const Geometry & geom_fine, bool & bail);
 
     // Get plotfile name
     std::string PlotFileName (int lev) const;
@@ -200,81 +233,6 @@ private:
     amrex::AmrMeshInSituBridge *insitu_bridge;
 #endif
 };
-
-
-namespace MFUtil {
-
-    template<typename T> // T can be either MultiFab or iMultiFab
-    struct SymmetricGhost {
-        static void copy (T & target, const T & source, int nc, int ng) {
-            target.copy(source, 0, 0, nc, ng, ng);
-        }
-    };
-
-
-    template<typename T> // T can be either MultiFab or iMultiFab
-    struct AsymmetricGhost {
-        static void copy (T & target, const T & source, int nc, int ng) {
-            target.copy(source, 0, 0, nc, 0, ng);
-        }
-    };
-
-
-    template<typename T, template<typename> typename Cpy> // T can be either MultiFab or iMultiFab
-    T duplicate(const BoxArray & ba, const DistributionMapping & dm, const T & mf_in) {
-
-        int ng = mf_in.nGrow();
-        int nc = mf_in.nComp();
-
-        T mf_out(ba, dm, nc, ng);
-
-        Cpy<T>::copy(mf_out, mf_in, nc, ng);
-
-        return std::move(mf_out);
-    }
-
-
-    template<typename T, template<typename> typename Cpy> // T can be either MultiFab or iMultiFab
-    T duplicate(const BoxArray & ba, const DistributionMapping & dm, const T & mf_in,
-                const Periodicity & periodicity) {
-
-        T mf_out = duplicate<T, Cpy>(ba, dm, mf_in);
-        mf_out.FillBoundary(periodicity);
-
-        return std::move(mf_out);
-    }
-
-
-
-    template<typename T_src, typename T_dest>
-    std::unique_ptr<T_dest> convert(const T_src & mf_in) {
-
-        const BoxArray & ba            = mf_in.boxArray();
-        const DistributionMapping & dm = mf_in.DistributionMap();
-              int ncomp                = mf_in.nComp();
-              int ngrow                = mf_in.nGrow();
-
-        std::unique_ptr<T_dest> mf_out(new T_dest(ba, dm, ncomp, ngrow));
-
-#ifdef _OPENMP
-#pragma omp parallel
-#endif
-        for(MFIter mfi(mf_in, true); mfi.isValid(); ++ mfi) {
-            const IArrayBox & in_tile  =      mf_in[mfi];
-                  FArrayBox & out_tile = (* mf_out)[mfi];
-
-            for(BoxIterator bit(mfi.growntilebox()); bit.ok(); ++ bit) {
-
-                for(int i = 0; i < ncomp; i ++)
-                    out_tile(bit(), i) = in_tile(bit(), i);
-
-            }
-        }
-
-        return mf_out;
-    }
-};
-
 
 
 }
