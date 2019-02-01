@@ -1700,11 +1700,18 @@ ParticleContainer<NStructReal, NStructInt, NArrayReal, NArrayInt>
           auto& soa = ptile_ptrs[pmap_it]->GetStructOfArrays();
           unsigned npart = aos.numParticles();              
           ParticleLocData pld;
+          ParticleLocData pld_split;
+		  Print()<<"############\n";
+		  Print()<<"############\n";
+		  Print()<<"npart = "<<npart<<"\n";
+		  Print()<<"############\n";
+		  Print()<<"############\n";
           if (npart != 0) {
               long last = npart - 1;
               unsigned pindex = 0;
               while (pindex <= last) {
                   ParticleType& p = aos[pindex];
+				  ParticleType p_split = p;
 
                   if (p.m_idata.id < 0)
 		  {
@@ -1717,12 +1724,14 @@ ParticleContainer<NStructReal, NStructInt, NArrayReal, NArrayInt>
                       --last;
                       continue;
                   }
-                      
+
                   locateParticle(p, pld, lev_min, lev_max, nGrow, local ? grid : -1);
 
+				  //Print()<<"lev "<<lev<<'\n';
+				  //Print()<<"pld.m_lev "<<pld.m_lev<<'\n';
                   particlePostLocate(p, pld, lev);
                   
-                  if (p.m_idata.id < 0)
+                  if (p.m_idata.id < 0 && p.m_idata.id != SplitParticleID)
                   {
                       aos[pindex] = aos[last];
                       for (int comp = 0; comp < NArrayReal; comp++)
@@ -1735,8 +1744,135 @@ ParticleContainer<NStructReal, NStructInt, NArrayReal, NArrayInt>
                   }
 
                   const int who = ParticleDistributionMap(pld.m_lev)[pld.m_grid];
-                  if (who == MyProc) {
-                      if (pld.m_lev != lev || pld.m_grid != grid || pld.m_tile != tile) {
+                  // maxence
+				  if (who == MyProc) {
+                      if (p.m_idata.id == SplitParticleID) {
+						  Print()<<"p.m_idata.id == SplitParticleID";
+						  // dx = WarpX::CellSize(lev);
+						  Real dx = 40./128*1.e-6;
+						  Real dz = 40./128*1.e-6;
+						  for (int ishift = -1; ishift < 2; ishift +=2 ){
+							  /*
+							  p_split = p;
+							  locateParticle(p_split, pld_split, lev_min, lev_max, nGrow, local ? grid : -1);
+							  auto index_split = std::make_pair(pld_split.m_grid, pld_split.m_tile);
+							  BL_ASSERT(tmp_local[pld_split.m_lev][index_split].size() == num_threads);
+							  p_split.id() = ParticleType::NextID();
+							  tmp_local[pld_split.m_lev][index_split][thread_num].push_back(p_split);
+							  RealVector& arr0 = soa_local[pld_split.m_lev][index_split][thread_num].GetRealData(0);
+							  arr0.push_back(soa.GetRealData(0)[pindex]/4.);
+							  for (int comp = 1; comp < NArrayReal; ++comp) {
+								  RealVector& arr = soa_local[pld_split.m_lev][index_split][thread_num].GetRealData(comp);
+								  arr.push_back(soa.GetRealData(comp)[pindex]);
+							  }
+							  for (int comp = 0; comp < NArrayInt; ++comp) {
+								  IntVector& arr = soa_local[pld_split.m_lev][index_split][thread_num].GetIntData(comp);
+								  arr.push_back(soa.GetIntData(comp)[pindex]);
+							  }
+							  p_split = p;
+							  locateParticle(p_split, pld_split, lev_min, lev_max, nGrow, local ? grid : -1);
+							  index_split = std::make_pair(pld_split.m_grid, pld_split.m_tile);
+							  BL_ASSERT(tmp_local[pld_split.m_lev][index_split].size() == num_threads);
+							  p_split.id() = ParticleType::NextID();
+							  tmp_local[pld_split.m_lev][index_split][thread_num].push_back(p_split);
+							  arr0 = soa_local[pld_split.m_lev][index_split][thread_num].GetRealData(0);
+							  arr0.push_back(soa.GetRealData(0)[pindex]/4.);
+							  for (int comp = 1; comp < NArrayReal; ++comp) {
+								  RealVector& arr = soa_local[pld_split.m_lev][index_split][thread_num].GetRealData(comp);
+								  arr.push_back(soa.GetRealData(comp)[pindex]);
+							  }
+							  for (int comp = 0; comp < NArrayInt; ++comp) {
+								  IntVector& arr = soa_local[pld_split.m_lev][index_split][thread_num].GetIntData(comp);
+								  arr.push_back(soa.GetIntData(comp)[pindex]);
+							  }
+							  */
+
+							  // split in x
+							  auto index = std::make_pair(pld.m_grid, pld.m_tile);
+							  p_split = p;
+							  p_split.pos(0) += ishift * dx/4;
+							  BL_ASSERT(tmp_local[pld.m_lev][index].size() == num_threads);
+							  p_split.id() = ParticleType::NextID();
+							  tmp_local[pld.m_lev][index][thread_num].push_back(p_split);
+							  //RealVector& arr0 = soa_local[pld.m_lev][index][thread_num].GetRealData(0);
+							  //arr0.push_back(soa.GetRealData(0)[pindex]/4.);
+							  for (int comp = 0; comp < NArrayReal; ++comp) {
+								  RealVector& arr = soa_local[pld.m_lev][index][thread_num].GetRealData(comp);
+								  arr.push_back(soa.GetRealData(comp)[pindex]);
+							  }
+							  for (int comp = 0; comp < NArrayInt; ++comp) {
+								  IntVector& arr = soa_local[pld.m_lev][index][thread_num].GetIntData(comp);
+								  arr.push_back(soa.GetIntData(comp)[pindex]);
+							  }
+							  // split in z
+							  p_split = p;
+							  p_split.pos(1) += ishift * dz/4;
+							  BL_ASSERT(tmp_local[pld.m_lev][index].size() == num_threads);
+							  p_split.id() = ParticleType::NextID();
+							  tmp_local[pld.m_lev][index][thread_num].push_back(p_split);
+							  for (int comp = 0; comp < NArrayReal; ++comp) {
+								  RealVector& arr = soa_local[pld.m_lev][index][thread_num].GetRealData(comp);
+								  arr.push_back(soa.GetRealData(comp)[pindex]);
+							  }
+							  //arr0 = soa_local[pld.m_lev][index][thread_num].GetRealData(0);
+							  //arr0.push_back(soa.GetRealData(0)[pindex]/4.);
+							  //for (int comp = 1; comp < NArrayReal; ++comp) {
+								  //RealVector& arr = soa_local[pld.m_lev][index][thread_num].GetRealData(comp);
+								  //arr.push_back(soa.GetRealData(comp)[pindex]);
+								  //}
+							  for (int comp = 0; comp < NArrayInt; ++comp) {
+								  IntVector& arr = soa_local[pld.m_lev][index][thread_num].GetIntData(comp);
+								  arr.push_back(soa.GetIntData(comp)[pindex]);
+							  }
+
+							  /*
+							  // split in x
+							  Print()<<"Here 1\n";
+							  p_split = p;
+							  p_split.pos(0) += ishift * dx/4;
+							  locateParticle(p_split, pld_split, lev_min, lev_max, nGrow, local ? grid : -1);
+							  auto index_split = std::make_pair(pld_split.m_grid, pld_split.m_tile);
+							  BL_ASSERT(tmp_local[pld_split.m_lev][index_split].size() == num_threads);
+							  p_split.id() = ParticleType::NextID();
+							  tmp_local[pld_split.m_lev][index_split][thread_num].push_back(p_split);
+							  RealVector& arr0 = soa_local[pld_split.m_lev][index_split][thread_num].GetRealData(0);
+							  arr0.push_back(soa.GetRealData(0)[pindex]/4.);
+							  Print()<<"Here 2\n";
+							  for (int comp = 1; comp < NArrayReal; ++comp) {
+								  RealVector& arr = soa_local[pld_split.m_lev][index_split][thread_num].GetRealData(comp);
+								  arr.push_back(soa.GetRealData(comp)[pindex]);
+							  }
+							  for (int comp = 0; comp < NArrayInt; ++comp) {
+								  IntVector& arr = soa_local[pld_split.m_lev][index_split][thread_num].GetIntData(comp);
+								  arr.push_back(soa.GetIntData(comp)[pindex]);
+							  }
+							  // split in z
+							  Print()<<"Here 3\n";
+							  p_split = p;
+							  p_split.pos(1) += ishift * dz/4;
+							  locateParticle(p_split, pld_split, lev_min, lev_max, nGrow, local ? grid : -1);
+							  BL_ASSERT(tmp_local[pld_split.m_lev][index_split].size() == num_threads);
+							  p_split.id() = ParticleType::NextID();
+							  tmp_local[pld_split.m_lev][index_split][thread_num].push_back(p_split);
+							  arr0 = soa_local[pld_split.m_lev][index_split][thread_num].GetRealData(0);
+							  arr0.push_back(soa.GetRealData(0)[pindex]/4.);
+							  Print()<<"Here 4\n";
+							  for (int comp = 1; comp < NArrayReal; ++comp) {
+								  RealVector& arr = soa_local[pld_split.m_lev][index_split][thread_num].GetRealData(comp);
+								  arr.push_back(soa.GetRealData(comp)[pindex]);
+							  }
+							  for (int comp = 0; comp < NArrayInt; ++comp) {
+								  IntVector& arr = soa_local[pld_split.m_lev][index_split][thread_num].GetIntData(comp);
+								  arr.push_back(soa.GetIntData(comp)[pindex]);
+							  }
+							  */
+
+							  //p_split.m_idata.id = -p_split.m_idata.id;
+							  Print()<<"Here 5\n";
+						  }
+						  p.m_idata.id = -1; // Invalidate the particle
+					  }
+					  if (pld.m_lev != lev || pld.m_grid != grid || pld.m_tile != tile){
                           // We own it but must shift it to another place.
                           auto index = std::make_pair(pld.m_grid, pld.m_tile);
                           BL_ASSERT(tmp_local[pld.m_lev][index].size() == num_threads);
@@ -1749,11 +1885,8 @@ ParticleContainer<NStructReal, NStructInt, NArrayReal, NArrayInt>
                               IntVector& arr = soa_local[pld.m_lev][index][thread_num].GetIntData(comp);
                               arr.push_back(soa.GetIntData(comp)[pindex]);
                           }
-                          
-                          p.m_idata.id = -p.m_idata.id; // Invalidate the particle
-                      }
-                  }
-                  else {
+					  }
+				  } else {
                       auto& particles_to_send = tmp_remote[who][thread_num];
                       auto old_size = particles_to_send.size();
                       auto new_size = old_size + superparticle_size;
@@ -2122,6 +2255,7 @@ RedistributeMPI (std::map<int, Vector<char> >& not_ours,
         }
 
 	BL_PROFILE_VAR_STOP(blp_locate);
+	Print()<<"TOTO2\n";
 
         BL_PROFILE_VAR_START(blp_copy);
 
@@ -2131,9 +2265,17 @@ RedistributeMPI (std::map<int, Vector<char> >& not_ours,
             
             char* pbuf = recvdata.data() + j*superparticle_size;
             ParticleType p;
-            std::memcpy(&p, pbuf, sizeof(ParticleType));            
-            ptile.push_back(p);
+            std::memcpy(&p, pbuf, sizeof(ParticleType));
 
+            Real* rdata = (Real*)(pbuf + particle_size);
+			Print()<<"HERE\n";
+			// particlePostReceive(p, ptile, rdata, particle_size);
+			// maxence
+			  /*
+			  ParticleType p_split;
+			  std::memcpy(&p_split, pbuf, sizeof(ParticleType));
+			  p_split.m_rdata.pos[0] += 5.e-6;
+			  ptile.push_back(p_split);
             Real* rdata = (Real*)(pbuf + particle_size);
             for (int comp = 0; comp < NArrayReal; ++comp) {
                 if (communicate_real_comp[comp]) {
@@ -2141,8 +2283,7 @@ RedistributeMPI (std::map<int, Vector<char> >& not_ours,
                 } else {
                     ptile.push_back_real(comp, 0.0);
                 }
-            }
-            
+            }            
             int* idata = (int*)(pbuf + particle_size + num_real_comm_comps*sizeof(Real));
             for (int comp = 0; comp < NArrayInt; ++comp) {
                 if (communicate_int_comp[comp]) {
@@ -2150,7 +2291,24 @@ RedistributeMPI (std::map<int, Vector<char> >& not_ours,
                 } else {
                     ptile.push_back_int(comp, 0);
                 }
+            }
+			  */
+            ptile.push_back(p);
+            for (int comp = 0; comp < NArrayReal; ++comp) {
+                if (communicate_real_comp[comp]) {
+                    ptile.push_back_real(comp, *rdata++);
+                } else {
+                    ptile.push_back_real(comp, 0.0);
+                }
             }            
+            int* idata = (int*)(pbuf + particle_size + num_real_comm_comps*sizeof(Real));
+            for (int comp = 0; comp < NArrayInt; ++comp) {
+                if (communicate_int_comp[comp]) {
+                    ptile.push_back_int(comp, *idata++);
+                } else {
+                    ptile.push_back_int(comp, 0);
+                }
+            }
         }
 
 	BL_PROFILE_VAR_STOP(blp_copy);
